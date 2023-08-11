@@ -1,12 +1,10 @@
 package ironicinspector
 
 import (
-	routev1 "github.com/openshift/api/route/v1"
 	ironicv1 "github.com/openstack-k8s-operators/ironic-operator/api/v1beta1"
 	ironic "github.com/openstack-k8s-operators/ironic-operator/pkg/ironic"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // Service - Service for conductor pod services
@@ -45,6 +43,7 @@ func Service(
 	}
 }
 
+/*
 // Route - Route for httpboot service when no inspection network
 func Route(
 	serviceName string,
@@ -70,3 +69,4 @@ func Route(
 		},
 	}
 }
+*/

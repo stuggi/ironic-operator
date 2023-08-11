@@ -24,7 +24,6 @@ import (
 
 	k8s_types "k8s.io/apimachinery/pkg/types"
 
-	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -72,7 +71,6 @@ type IronicConductorReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;create;update;patch;delete;watch
-// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;delete;
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;create;update;patch;delete;watch
@@ -240,7 +238,6 @@ func (r *IronicConductorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&ironicv1.IronicConductor{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Secret{}).
-		Owns(&routev1.Route{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.ServiceAccount{}).
@@ -317,46 +314,55 @@ func (r *IronicConductorReconciler) reconcileServices(
 		}
 		// create service - end
 
+		//
+		//
+		//
 		if instance.Spec.ProvisionNetwork == "" {
-			//
-			// Create the conductor pod route to enable traffic to the
-			// httpboot service, only when there is no provisioning network
-			//
-			conductorRouteLabels := map[string]string{
-				common.AppSelector:            ironic.ServiceName,
-				common.ComponentSelector:      ironic.HttpbootComponent,
-				ironic.ConductorGroupSelector: ironicv1.ConductorGroupNull,
-			}
-			if instance.Spec.ConductorGroup != "" {
-				conductorRouteLabels[ironic.ConductorGroupSelector] = strings.ToLower(instance.Spec.ConductorGroup)
-			}
+			// Manual step to create a route, openstack-operator to create the route if instance.Spec.ProvisionNetwork == ""?
+			// Should the service conductor service be overrideable ?
+			r.Log.Info("No Provision network Create the conductor pod route to enable traffic to the httpboot service")
 
-			conductorRoute := ironicconductor.Route(conductorPod.Name, instance, conductorRouteLabels)
-			err = controllerutil.SetOwnerReference(&conductorPod, conductorRoute, helper.GetScheme())
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			err = r.Get(
-				ctx,
-				k8s_types.NamespacedName{
-					Name:      conductorRoute.Name,
-					Namespace: conductorRoute.Namespace,
-				},
-				conductorRoute,
-			)
-			if err != nil && k8s_errors.IsNotFound(err) {
-				r.Log.Info(fmt.Sprintf("Route %s does not exist, creating it", conductorRoute.Name))
-				err = r.Create(ctx, conductorRoute)
+			/*
+				//
+				// Create the conductor pod route to enable traffic to the
+				// httpboot service, only when there is no provisioning network
+				//
+				conductorRouteLabels := map[string]string{
+					common.AppSelector:            ironic.ServiceName,
+					common.ComponentSelector:      ironic.HttpbootComponent,
+					ironic.ConductorGroupSelector: ironicv1.ConductorGroupNull,
+				}
+				if instance.Spec.ConductorGroup != "" {
+					conductorRouteLabels[ironic.ConductorGroupSelector] = strings.ToLower(instance.Spec.ConductorGroup)
+				}
+
+				conductorRoute := ironicconductor.Route(conductorPod.Name, instance, conductorRouteLabels)
+				err = controllerutil.SetOwnerReference(&conductorPod, conductorRoute, helper.GetScheme())
 				if err != nil {
 					return ctrl.Result{}, err
 				}
-			} else {
-				r.Log.Info(fmt.Sprintf("Route %s exists, updating it", conductorRoute.Name))
-				err = r.Update(ctx, conductorRoute)
-				if err != nil {
-					return ctrl.Result{}, err
+				err = r.Get(
+					ctx,
+					k8s_types.NamespacedName{
+						Name:      conductorRoute.Name,
+						Namespace: conductorRoute.Namespace,
+					},
+					conductorRoute,
+				)
+				if err != nil && k8s_errors.IsNotFound(err) {
+					r.Log.Info(fmt.Sprintf("Route %s does not exist, creating it", conductorRoute.Name))
+					err = r.Create(ctx, conductorRoute)
+					if err != nil {
+						return ctrl.Result{}, err
+					}
+				} else {
+					r.Log.Info(fmt.Sprintf("Route %s exists, updating it", conductorRoute.Name))
+					err = r.Update(ctx, conductorRoute)
+					if err != nil {
+						return ctrl.Result{}, err
+					}
 				}
-			}
+			*/
 		}
 	}
 

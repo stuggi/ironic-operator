@@ -18,7 +18,6 @@ package functional_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	routev1 "github.com/openshift/api/route/v1"
 	ironicv1 "github.com/openstack-k8s-operators/ironic-operator/api/v1beta1"
 	"github.com/openstack-k8s-operators/lib-common/modules/common"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/condition"
@@ -149,12 +148,12 @@ var _ = Describe("IronicConductor controller", func() {
 				corev1.ConditionTrue,
 			)
 		})
-		It("Creates a Service and a Route", func() {
+		It("Creates a Service", func() {
 			podIps := map[string][]string{
 				"openshift-sdn": {"10.217.1.26"},
 			}
 			th.SimulateStatefulSetReplicaReadyWithPods(ironicNames.ConductorName, podIps)
-			// Route and Service for each replica share the same name
+			// Service for each replica share the same name
 			name := types.NamespacedName{
 				Namespace: ironicNames.ConductorName.Namespace,
 				Name:      ironicNames.ConductorName.Name + "-0",
@@ -163,12 +162,6 @@ var _ = Describe("IronicConductor controller", func() {
 			Eventually(func(g Gomega) {
 				g.Expect(
 					k8sClient.Get(ctx, name, &corev1.Service{}),
-				).Should(Succeed())
-			}, timeout, interval).Should(Succeed())
-			// Verify Route created
-			Eventually(func(g Gomega) {
-				g.Expect(
-					k8sClient.Get(ctx, name, &routev1.Route{}),
 				).Should(Succeed())
 			}, timeout, interval).Should(Succeed())
 		})

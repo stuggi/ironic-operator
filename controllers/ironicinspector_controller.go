@@ -34,11 +34,11 @@ import (
 	nad "github.com/openstack-k8s-operators/lib-common/modules/common/networkattachment"
 	common_rbac "github.com/openstack-k8s-operators/lib-common/modules/common/rbac"
 	oko_secret "github.com/openstack-k8s-operators/lib-common/modules/common/secret"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/service"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/statefulset"
 	util "github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	database "github.com/openstack-k8s-operators/lib-common/modules/database"
 
-	routev1 "github.com/openshift/api/route/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	k8s_types "k8s.io/apimachinery/pkg/types"
 
@@ -89,7 +89,6 @@ var (
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;create;update;patch;delete;watch
-// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;delete;
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;create;update;patch;delete;watch
@@ -304,7 +303,6 @@ func (r *IronicInspectorReconciler) SetupWithManager(
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ironicv1.IronicInspector{}).
 		Owns(&corev1.Secret{}).
-		Owns(&routev1.Route{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&rbacv1.Role{}).
@@ -892,61 +890,91 @@ func (r *IronicInspectorReconciler) reconcileExposeService(
 	serviceLabels map[string]string,
 ) (ctrl.Result, error) {
 	//
-	// expose the service (create service, route and return the created endpoint URLs)
+	// expose the service (create service and return the created endpoint URLs)
 	//
 
 	// V1
-	data := map[endpoint.Endpoint]endpoint.Data{
-		endpoint.EndpointPublic: {
+	data := map[service.Endpoint]endpoint.Data{
+		service.EndpointPublic: {
 			Port: ironicinspector.IronicInspectorPublicPort,
 		},
-		endpoint.EndpointInternal: {
+		service.EndpointInternal: {
 			Port: ironicinspector.IronicInspectorInternalPort,
 		},
 	}
 
-	for _, metallbcfg := range instance.Spec.ExternalEndpoints {
-		portCfg := data[metallbcfg.Endpoint]
-		portCfg.MetalLB = &endpoint.MetalLBData{
-			IPAddressPool:   metallbcfg.IPAddressPool,
-			SharedIP:        metallbcfg.SharedIP,
-			SharedIPKey:     metallbcfg.SharedIPKey,
-			LoadBalancerIPs: metallbcfg.LoadBalancerIPs,
+	apiEndpoints := make(map[string]string)
+	inspectorServiceName := ironic.ServiceName + "-" + ironic.InspectorComponent
+
+	for endpointType, data := range data {
+		endpointName := inspectorServiceName + "-" + string(endpointType)
+		svcOverride := service.GetOverrideSpecForEndpoint(instance.Spec.Override.Service, endpointType)
+
+		exportLabels := util.MergeStringMaps(
+			serviceLabels,
+			map[string]string{
+				string(endpointType): "true",
+			},
+		)
+
+		// Create the service
+		svc, err := service.NewService(
+			service.GenericService(&service.GenericServiceDetails{
+				Name:      endpointName,
+				Namespace: instance.Namespace,
+				Labels:    exportLabels,
+				Selector:  serviceLabels,
+				Port: service.GenericServicePort{
+					Name:     endpointName,
+					Port:     data.Port,
+					Protocol: corev1.ProtocolTCP,
+				},
+			}),
+			5,
+			svcOverride,
+		)
+		if err != nil {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				condition.ExposeServiceReadyCondition,
+				condition.ErrorReason,
+				condition.SeverityWarning,
+				condition.ExposeServiceReadyErrorMessage,
+				err.Error()))
+
+			return ctrl.Result{}, err
 		}
 
-		data[metallbcfg.Endpoint] = portCfg
-	}
+		ctrlResult, err := svc.CreateOrPatch(ctx, helper)
+		if err != nil {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				condition.ExposeServiceReadyCondition,
+				condition.ErrorReason,
+				condition.SeverityWarning,
+				condition.ExposeServiceReadyErrorMessage,
+				err.Error()))
 
-	inspectorServiceName := ironic.ServiceName + "-" + ironic.InspectorComponent
-	apiEndpoints, ctrlResult, err := endpoint.ExposeEndpoints(
-		ctx,
-		helper,
-		inspectorServiceName,
-		serviceLabels,
-		data,
-		time.Duration(5)*time.Second,
-	)
-	if err != nil {
-		instance.Status.Conditions.Set(condition.FalseCondition(
-			condition.ExposeServiceReadyCondition,
-			condition.ErrorReason,
-			condition.SeverityWarning,
-			condition.ExposeServiceReadyErrorMessage,
-			err.Error()))
-		return ctrlResult, err
-	} else if (ctrlResult != ctrl.Result{}) {
-		instance.Status.Conditions.Set(condition.FalseCondition(
-			condition.ExposeServiceReadyCondition,
-			condition.RequestedReason,
-			condition.SeverityInfo,
-			condition.ExposeServiceReadyRunningMessage))
-		return ctrlResult, nil
+			return ctrlResult, err
+		} else if (ctrlResult != ctrl.Result{}) {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				condition.ExposeServiceReadyCondition,
+				condition.RequestedReason,
+				condition.SeverityInfo,
+				condition.ExposeServiceReadyRunningMessage))
+			return ctrlResult, nil
+		}
+		// create service - end
+
+		// TODO: TLS, pass in https as protocol, create TLS cert
+		apiEndpoints[string(endpointType)], err = svc.GetAPIEndpoint(
+			svcOverride, data.Protocol, data.Path)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	//
-	// Update instance status with service endpoint url from route host information for v2
+	// Update instance status with service endpoint url information for v2
 	//
-	// TODO: need to support https default here
 	instance.Status.APIEndpoints[inspectorServiceName] = apiEndpoints
 	// V1 - end
 
@@ -1269,38 +1297,44 @@ func (r *IronicInspectorReconciler) reconcileServices(
 		// create service - end
 
 		if instance.Spec.InspectionNetwork == "" {
-			// Create the inspector pod route to enable traffic to the
-			// httpboot service, only when there is no inspection network
-			inspectorRouteLabels := map[string]string{
-				common.AppSelector:       ironic.ServiceName,
-				common.ComponentSelector: ironic.InspectorComponent + "-" + ironic.HttpbootComponent,
-			}
-			inspectorRoute := ironicinspector.Route(inspectorPod.Name, instance, inspectorRouteLabels)
-			err = controllerutil.SetOwnerReference(&inspectorPod, inspectorRoute, helper.GetScheme())
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			err = r.Get(
-				ctx,
-				k8s_types.NamespacedName{
-					Name:      inspectorRoute.Name,
-					Namespace: inspectorRoute.Namespace,
-				},
-				inspectorRoute,
-			)
-			if err != nil && k8s_errors.IsNotFound(err) {
-				r.Log.Info(fmt.Sprintf("Route %s does not exist, creating it", inspectorRoute.Name))
-				err = r.Create(ctx, inspectorRoute)
+			// Manual step to create a route, openstack-operator to create the route if instance.Spec.InspectionNetwork == ""?
+			// Should the service conductor service be overrideable ?
+			r.Log.Info("No Provision network Create the inspector pod route to enable traffic to the httpboot service")
+
+			/*
+				// Create the inspector pod route to enable traffic to the
+				// httpboot service, only when there is no inspection network
+				inspectorRouteLabels := map[string]string{
+					common.AppSelector:       ironic.ServiceName,
+					common.ComponentSelector: ironic.InspectorComponent + "-" + ironic.HttpbootComponent,
+				}
+				inspectorRoute := ironicinspector.Route(inspectorPod.Name, instance, inspectorRouteLabels)
+				err = controllerutil.SetOwnerReference(&inspectorPod, inspectorRoute, helper.GetScheme())
 				if err != nil {
 					return ctrl.Result{}, err
 				}
-			} else {
-				r.Log.Info(fmt.Sprintf("Route %s exists, updating it", inspectorRoute.Name))
-				err = r.Update(ctx, inspectorRoute)
-				if err != nil {
-					return ctrl.Result{}, err
+				err = r.Get(
+					ctx,
+					k8s_types.NamespacedName{
+						Name:      inspectorRoute.Name,
+						Namespace: inspectorRoute.Namespace,
+					},
+					inspectorRoute,
+				)
+				if err != nil && k8s_errors.IsNotFound(err) {
+					r.Log.Info(fmt.Sprintf("Route %s does not exist, creating it", inspectorRoute.Name))
+					err = r.Create(ctx, inspectorRoute)
+					if err != nil {
+						return ctrl.Result{}, err
+					}
+				} else {
+					r.Log.Info(fmt.Sprintf("Route %s exists, updating it", inspectorRoute.Name))
+					err = r.Update(ctx, inspectorRoute)
+					if err != nil {
+						return ctrl.Result{}, err
+					}
 				}
-			}
+			*/
 		}
 	}
 
