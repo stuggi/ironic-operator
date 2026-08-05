@@ -15,6 +15,7 @@ require (
 	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260806140515-16161b7b6b53
 	github.com/openstack-k8s-operators/lib-common/modules/test v0.6.1-0.20260806140515-16161b7b6b53
 	github.com/openstack-k8s-operators/mariadb-operator/api v0.6.1-0.20260803090920-52e0ba098701
+	github.com/openstack-k8s-operators/s2i-openstack-containers/users v0.0.0-00010101000000-000000000000
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.13
@@ -144,3 +145,7 @@ replace k8s.io/code-generator => k8s.io/code-generator v0.33.13 //allow-merging
 replace k8s.io/component-base => k8s.io/component-base v0.33.13 //allow-merging
 
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250627150254-e9823e99808e //allow-merging
+
+replace github.com/openstack-k8s-operators/lib-common/modules/common => github.com/stuggi/lib-common/modules/common v0.0.0-20260811135310-bc3452fb3726
+
+replace github.com/openstack-k8s-operators/s2i-openstack-containers/users => github.com/stuggi/s2i-openstack-containers/users v0.0.0-20260811134512-dcb5df34add3
