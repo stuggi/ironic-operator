@@ -38,18 +38,21 @@ func GetVolumes(name string) []corev1.Volume {
 
 }
 
-// GetVolumeMounts - IronicNeutronAgent VolumeMounts
+// GetVolumeMounts - IronicNeutronAgent VolumeMounts. Each file mounted
+// directly at its final destination via SubPath from the same "config"
+// Secret config.json used to stage-then-copy.
 func GetVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{
 			Name:      "config",
-			MountPath: "/var/lib/config-data/default",
+			MountPath: "/etc/neutron/neutron.conf.d/01-ironic_neutron_agent.conf",
+			SubPath:   "01-ironic_neutron_agent.conf",
 			ReadOnly:  true,
 		},
 		{
 			Name:      "config",
-			MountPath: "/var/lib/kolla/config_files/config.json",
-			SubPath:   "ironic-neutron-agent-config.json",
+			MountPath: "/etc/neutron/neutron.conf.d/02-ironic_neutron_agent-custom.conf",
+			SubPath:   "02-ironic_neutron_agent-custom.conf",
 			ReadOnly:  true,
 		},
 	}

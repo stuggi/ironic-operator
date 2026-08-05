@@ -80,18 +80,18 @@ func GetInitVolumeMounts() []corev1.VolumeMount {
 
 }
 
-// GetVolumeMounts - Ironic VolumeMounts
+// GetVolumeMounts - Ironic VolumeMounts. Note: does NOT mount
+// "config-data-merged" as a whole directory -- only GetInitVolumeMounts()
+// (the init container that actually writes into it via crudini-merge)
+// needs that. Consumers that need one specific merged file mount it
+// directly at its final destination via SubPath (see
+// GetMergedConfVolumeMount()) once the init container has already run.
 func GetVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{
 			Name:      "scripts",
 			MountPath: "/usr/local/bin/container-scripts",
 			ReadOnly:  true,
-		},
-		{
-			Name:      "config-data-merged",
-			MountPath: "/var/lib/config-data/merged",
-			ReadOnly:  false,
 		},
 		{
 			Name:      "etc-podinfo",
@@ -101,16 +101,35 @@ func GetVolumeMounts() []corev1.VolumeMount {
 	}
 }
 
-// GetDBSyncVolumeMounts - Ironic VolumeMounts
-func GetDBSyncVolumeMounts() []corev1.VolumeMount {
+// GetMergedConfVolumeMount - a single file out of the "config-data-merged"
+// EmptyDir, SubPath-mounted directly at its final destination. Safe despite
+// being a SubPath mount of an EmptyDir: the init container (an earlier
+// container in the same pod) already wrote the real file there through its
+// own *whole-directory* mount of the same EmptyDir (GetInitVolumeMounts()),
+// so by the time any of these later containers start, the file already
+// exists -- see horizon-operator's equivalent fix for why a SubPath mount
+// of a *not-yet-existing* path would otherwise be auto-created by kubelet
+// as a directory.
+func GetMergedConfVolumeMount(finalPath, subPath string) corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      "config-data-merged",
+		MountPath: finalPath,
+		SubPath:   subPath,
+		ReadOnly:  true,
+	}
+}
 
+// GetDBSyncVolumeMounts - Ironic db-sync VolumeMounts. Sources ironic.conf/
+// 02-ironic-custom.conf/my.cnf from the merged EmptyDir (matching what
+// db-sync-config.json's kolla copy step used to read from), not from the
+// raw "config-data"/"config-data-custom" Secrets directly -- db-sync always
+// ran through the merge step, even though it doesn't need
+// 03-init-container-conductor.conf (conductor-only).
+func GetDBSyncVolumeMounts() []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "config-data",
-			MountPath: "/var/lib/kolla/config_files/config.json",
-			SubPath:   "db-sync-config.json",
-			ReadOnly:  true,
-		},
+		GetMergedConfVolumeMount("/etc/ironic/ironic.conf", "ironic.conf"),
+		GetMergedConfVolumeMount("/etc/ironic/ironic.conf.d/02-ironic-custom.conf", "02-ironic-custom.conf"),
+		GetMergedConfVolumeMount("/etc/my.cnf", "my.cnf"),
 	}
 
 	return append(GetVolumeMounts(), volumeMounts...)

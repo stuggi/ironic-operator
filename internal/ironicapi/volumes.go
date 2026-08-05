@@ -48,6 +48,8 @@ func GetVolumes(ctx context.Context, instance *ironicv1.IronicAPI) []corev1.Volu
 			})
 	}
 
+	apiVolumes = append(apiVolumes, GetRunHttpdVolume())
+
 	return append(ironic.GetVolumes(instance.Name), apiVolumes...)
 }
 
@@ -57,6 +59,29 @@ func GetLogVolumeMount() corev1.VolumeMount {
 		Name:      "logs",
 		MountPath: "/var/log/ironic",
 		ReadOnly:  false,
+	}
+}
+
+// GetRunHttpdVolume - EmptyDir for httpd's PID file directory, needed once
+// httpd runs as a non-root, FSGroup-only user (kolla used to chown
+// /etc/httpd/run at startup). Mounted at /run/httpd, not /etc/httpd/run
+// directly: ironic-api-httpd.conf's "PidFile run/httpd.pid" resolves
+// relative to ServerRoot ("/etc/httpd"), and /etc/httpd/run is itself a
+// symlink to ../../run/httpd in the image.
+func GetRunHttpdVolume() corev1.Volume {
+	return corev1.Volume{
+		Name: "run-httpd",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+}
+
+// GetRunHttpdVolumeMount -
+func GetRunHttpdVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      "run-httpd",
+		MountPath: "/run/httpd",
 	}
 }
 
@@ -79,29 +104,64 @@ func GetInitVolumeMounts(instance *ironicv1.IronicAPI) []corev1.VolumeMount {
 	return append(ironic.GetInitVolumeMounts(), initVolumeMounts...)
 }
 
-// GetVolumeMounts - Ironic API VolumeMounts
+// GetVolumeMounts - Ironic API VolumeMounts. Each file is mounted directly
+// at its final destination via SubPath from the same "config-data" Secret
+// config.json used to stage-then-copy -- note this bypasses the shared
+// "config-data-merged" EmptyDir entirely (ironic.GetVolumeMounts()'s mount
+// of it is still inherited below since the init container's merge step
+// still runs unconditionally, but ironic-api-config.json never actually
+// sourced from "merged/" in the first place, only conductor does).
 func GetVolumeMounts(instance *ironicv1.IronicAPI) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "config-data",
-			MountPath: "/var/lib/kolla/config_files/config.json",
-			SubPath:   "ironic-api-config.json",
+			MountPath: "/etc/ironic/ironic.conf",
+			SubPath:   "ironic.conf",
 			ReadOnly:  true,
 		},
 		{
 			Name:      "config-data",
-			MountPath: "/var/lib/config-data/default",
+			MountPath: "/etc/ironic/ironic.conf.d/01-api.conf",
+			SubPath:   "01-api.conf",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "config-data",
+			MountPath: "/etc/ironic/ironic.conf.d/03-api-custom.conf",
+			SubPath:   "03-api-custom.conf",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "config-data",
+			MountPath: "/etc/httpd/conf/httpd.conf",
+			SubPath:   "ironic-api-httpd.conf",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "config-data",
+			MountPath: "/etc/httpd/conf.d/ssl.conf",
+			SubPath:   "ssl.conf",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "config-data",
+			MountPath: "/etc/my.cnf",
+			SubPath:   "my.cnf",
 			ReadOnly:  true,
 		},
 		GetLogVolumeMount(),
+		GetRunHttpdVolumeMount(),
 	}
 
-	// Add config-data-custom volume mount if parentName is present
+	// 02-ironic-custom.conf is cross-cutting (shared by api/conductor/
+	// inspector), stored in the parent Ironic CR's own "-config-data"
+	// Secret ("config-data-custom" here), not this component's own.
 	parentName := ironicv1.GetOwningIronicName(instance)
 	if parentName != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "config-data-custom",
-			MountPath: "/var/lib/config-data/custom",
+			MountPath: "/etc/ironic/ironic.conf.d/02-ironic-custom.conf",
+			SubPath:   "02-ironic-custom.conf",
 			ReadOnly:  true,
 		})
 	}
